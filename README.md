@@ -1,8 +1,6 @@
 # 🚀 Start Point
 
-Welcome to **Start Point**! This is my simple browser homepage dashboard built with Next.js. 
-
-Anyone is free to use this code as a foundation for their own site if they wish. ✨
+Welcome to **Start Point**! This is my simple browser homepage dashboard built with Next.js. Anyone is free to use this code as a foundation for their own site if they wish.
 
 ## ✨ Features
 
