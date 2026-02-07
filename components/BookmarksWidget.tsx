@@ -15,7 +15,7 @@ const BOOKMARKS = [
   { name: 'T3Chat', url: 'https://t3.chat', icon: MessageCircle, color: 'text-pink-500' },
   { name: 'Google', url: 'https://google.com', icon: Search, color: 'text-red-400' },
   { name: 'YouTube', url: 'https://youtube.com', icon: Youtube, color: 'text-rose-500' },
-  { name: 'Reddit', url: 'https://reddit.com', icon: Share2, color: 'text-orange-600' },
+  { name: 'Reddit', url: 'https://old.reddit.com', icon: Share2, color: 'text-orange-600' },
 ];
 
 export default function BookmarksWidget() {
