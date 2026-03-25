@@ -1,7 +1,7 @@
 import DateWidget from '@/components/DateWidget';
 import WeatherWidget from '@/components/WeatherWidget';
 import NewsWidget from '@/components/NewsWidget';
-import BookmarksWidget from '@/components/BookmarksWidget';
+import MusicWidget from '@/components/MusicWidget';
 import DevGreeting from '@/components/DevGreeting';
 
 export default function Home() {
@@ -49,9 +49,9 @@ export default function Home() {
               <WeatherWidget />
             </div>
 
-            {/* Bookmarks Widget */}
+            {/* Music Widget */}
             <div className="transition-transform hover:scale-[1.02] duration-300 h-[320px]">
-              <BookmarksWidget />
+              <MusicWidget />
             </div>
 
             {/* News Widget */}
