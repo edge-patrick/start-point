@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import Image from 'next/image';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import {
   Play,
   Pause,
@@ -12,8 +13,8 @@ import {
 } from 'lucide-react';
 
 const PLAYLIST = [
-  { id: 'jfKfPfyJRdk', title: 'lofi hip hop radio', isLive: true },
-  { id: 'Na0w3Mz46GA', title: 'asian lofi radio', isLive: true },
+  { id: 'X4VbdwhkE10', title: 'lofi hip hop radio', isLive: true },
+  { id: '1Tl2FtV06qo', title: 'asian lofi radio', isLive: true },
   { id: '1fueZCTYkpA', title: 'Morning Coffee', isLive: false },
   { id: 'lTRiuFIWV54', title: '1 A.M Study Session', isLive: false },
   { id: 'rt1mRnRp79A', title: 'coffee & beats', isLive: false },
@@ -29,8 +30,8 @@ const PLAYLIST = [
 
 declare global {
   interface Window {
-    onYouTubeIframeAPIReady: () => void;
-    YT: {
+    onYouTubeIframeAPIReady?: () => void;
+    YT?: {
       Player: new (elementId: string, config: YTPlayerConfig) => YTPlayer;
       PlayerState: {
         UNSTARTED: number;
@@ -73,7 +74,72 @@ interface YTEvent {
   data: number;
 }
 
+const YOUTUBE_IFRAME_API_SRC = 'https://www.youtube.com/iframe_api';
+const YOUTUBE_API_TIMEOUT_MS = 10_000;
+
+let youtubeApiPromise: Promise<void> | null = null;
+
+const loadYouTubeIframeApi = () => {
+  if (window.YT?.Player) return Promise.resolve();
+  if (youtubeApiPromise) return youtubeApiPromise;
+
+  youtubeApiPromise = new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      resolve();
+    };
+
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      youtubeApiPromise = null;
+      window.clearTimeout(timeoutId);
+      reject(new Error('YouTube iframe API failed to load'));
+    };
+
+    const timeoutId = window.setTimeout(fail, YOUTUBE_API_TIMEOUT_MS);
+    const previousReady = window.onYouTubeIframeAPIReady;
+
+    window.onYouTubeIframeAPIReady = () => {
+      try {
+        previousReady?.();
+      } finally {
+        finish();
+      }
+    };
+
+    const existingScript = document.querySelector<HTMLScriptElement>(
+      `script[src="${YOUTUBE_IFRAME_API_SRC}"]`
+    );
+
+    if (existingScript) {
+      existingScript.addEventListener('error', fail, { once: true });
+      return;
+    }
+
+    const tag = document.createElement('script');
+    tag.src = YOUTUBE_IFRAME_API_SRC;
+    tag.async = true;
+    tag.onerror = fail;
+
+    const firstScriptTag = document.getElementsByTagName('script')[0];
+    if (firstScriptTag?.parentNode) {
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    } else {
+      document.head.appendChild(tag);
+    }
+  });
+
+  return youtubeApiPromise;
+};
+
 export default function MusicWidget() {
+  const reactId = useId();
+  const playerElementId = `youtube-player-${reactId.replace(/:/g, '')}`;
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(100);
@@ -83,17 +149,15 @@ export default function MusicWidget() {
   const [duration, setDuration] = useState(0);
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [playerError, setPlayerError] = useState<string | null>(null);
 
   const playerRef = useRef<YTPlayer | null>(null);
   const currentTrackIndexRef = useRef(currentTrackIndex);
   const volumeRef = useRef(volume);
 
-  // Keep refs in sync with state
-  currentTrackIndexRef.current = currentTrackIndex;
-  volumeRef.current = volume;
-
   const changeTrack = useCallback((index: number) => {
     if (!playerRef.current) return;
+    setPlayerError(null);
     setIsLoading(true);
     setCurrentTrackIndex(index);
     setProgress(0);
@@ -103,7 +167,18 @@ export default function MusicWidget() {
   }, []);
 
   const changeTrackRef = useRef(changeTrack);
-  changeTrackRef.current = changeTrack;
+
+  useEffect(() => {
+    currentTrackIndexRef.current = currentTrackIndex;
+  }, [currentTrackIndex]);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    changeTrackRef.current = changeTrack;
+  }, [changeTrack]);
 
   // Initialize player once — no dependencies, uses refs for current values
   useEffect(() => {
@@ -111,8 +186,9 @@ export default function MusicWidget() {
 
     const createPlayer = () => {
       if (destroyed || playerRef.current) return;
+      if (!window.YT?.Player) throw new Error('YouTube iframe API unavailable');
 
-      playerRef.current = new window.YT.Player('youtube-player', {
+      playerRef.current = new window.YT.Player(playerElementId, {
         height: '100',
         width: '100',
         videoId: PLAYLIST[0].id,
@@ -131,6 +207,7 @@ export default function MusicWidget() {
         events: {
           onReady: (event: YTEvent) => {
             if (destroyed) return;
+            setPlayerError(null);
             setIsReady(true);
             setIsLoading(false);
             event.target.setVolume(volumeRef.current);
@@ -158,6 +235,7 @@ export default function MusicWidget() {
           onError: () => {
             if (destroyed) return;
             setIsLoading(false);
+            setPlayerError('Track unavailable');
             const nextIndex = (currentTrackIndexRef.current + 1) % PLAYLIST.length;
             changeTrackRef.current(nextIndex);
           },
@@ -165,19 +243,13 @@ export default function MusicWidget() {
       });
     };
 
-    if (window.YT && window.YT.Player) {
-      createPlayer();
-    } else {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      if (firstScriptTag?.parentNode) {
-        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-      } else {
-        document.head.appendChild(tag);
-      }
-      window.onYouTubeIframeAPIReady = createPlayer;
-    }
+    loadYouTubeIframeApi()
+      .then(createPlayer)
+      .catch(() => {
+        if (destroyed) return;
+        setPlayerError('Player unavailable');
+        setIsLoading(false);
+      });
 
     return () => {
       destroyed = true;
@@ -186,7 +258,7 @@ export default function MusicWidget() {
         playerRef.current = null;
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playerElementId]);
 
   // Progress tracking
   useEffect(() => {
@@ -258,16 +330,18 @@ export default function MusicWidget() {
     <div className="flex flex-col h-full bg-white/10 dark:bg-zinc-900/20 backdrop-blur-md border border-white/20 dark:border-zinc-800/30 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
       {/* Off-screen YouTube player */}
       <div style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '100px', height: '100px', pointerEvents: 'none' }}>
-        <div id="youtube-player"></div>
+        <div id={playerElementId}></div>
       </div>
 
       {/* Mini Player */}
       <div className="flex items-center gap-3 mb-3">
         {/* Thumbnail */}
         <div className="shrink-0 w-14 h-14 rounded-xl overflow-hidden relative border border-white/10 shadow-lg">
-          <img
+          <Image
             src={`https://i.ytimg.com/vi/${currentTrack.id}/mqdefault.jpg`}
             alt=""
+            fill
+            sizes="56px"
             className="w-full h-full object-cover"
           />
           {isPlaying && (
@@ -288,7 +362,7 @@ export default function MusicWidget() {
           <div className="flex items-center gap-2 mt-0.5">
             <div className={`w-1.5 h-1.5 rounded-full ${isPlaying ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
             <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest font-mono">
-              {currentTrack.isLive ? 'Live' : formatTime(currentTime) + ' / ' + formatTime(duration)}
+              {playerError || (currentTrack.isLive ? 'Live' : formatTime(currentTime) + ' / ' + formatTime(duration))}
             </p>
           </div>
         </div>
@@ -296,8 +370,9 @@ export default function MusicWidget() {
         {/* Play/Pause Button */}
         <button
           onClick={togglePlay}
+          aria-label={isPlaying ? 'Pause music' : 'Play music'}
           className="shrink-0 w-9 h-9 rounded-full bg-white flex items-center justify-center text-zinc-950 transition-all hover:scale-105 active:scale-95 shadow-[0_0_12px_rgba(255,255,255,0.2)] disabled:opacity-50"
-          disabled={!isReady}
+          disabled={!isReady || Boolean(playerError)}
         >
           {isLoading ? (
             <Loader2 size={16} className="animate-spin" />
@@ -312,10 +387,10 @@ export default function MusicWidget() {
       {/* Controls & Progress */}
       <div className="flex items-center gap-3 mb-3">
         <div className="flex items-center gap-2">
-          <button onClick={handlePrevious} className="text-white/40 hover:text-white transition-all active:scale-90" disabled={!isReady}>
+          <button onClick={handlePrevious} aria-label="Previous track" className="text-white/40 hover:text-white transition-all active:scale-90" disabled={!isReady || Boolean(playerError)}>
             <SkipBack size={14} fill="currentColor" />
           </button>
-          <button onClick={handleNext} className="text-white/40 hover:text-white transition-all active:scale-90" disabled={!isReady}>
+          <button onClick={handleNext} aria-label="Next track" className="text-white/40 hover:text-white transition-all active:scale-90" disabled={!isReady || Boolean(playerError)}>
             <SkipForward size={14} fill="currentColor" />
           </button>
         </div>
@@ -338,15 +413,17 @@ export default function MusicWidget() {
 
         {/* Volume */}
         <div className="flex items-center gap-1.5">
-          <button onClick={toggleMute} className="text-zinc-500 hover:text-white transition-colors" title={isMuted ? 'Unmute' : 'Mute'}>
+          <button onClick={toggleMute} aria-label={isMuted ? 'Unmute music' : 'Mute music'} className="text-zinc-500 hover:text-white transition-colors disabled:opacity-50" title={isMuted ? 'Unmute' : 'Mute'} disabled={!isReady || Boolean(playerError)}>
             {isMuted || volume === 0 ? <VolumeX size={12} /> : <Volume2 size={12} />}
           </button>
           <input
+            aria-label="Music volume"
             type="range"
             min="0"
             max="100"
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
+            disabled={!isReady || Boolean(playerError)}
             className="w-14 h-0.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-white"
           />
         </div>
@@ -359,6 +436,8 @@ export default function MusicWidget() {
             <button
               key={track.id}
               onClick={() => changeTrack(index)}
+              aria-label={`Play ${track.title}`}
+              aria-pressed={currentTrackIndex === index}
               className={`w-full flex items-center gap-3 p-2 rounded-lg transition-all text-left group/item ${
                 currentTrackIndex === index
                   ? 'bg-white/10 text-white'
@@ -366,9 +445,11 @@ export default function MusicWidget() {
               }`}
             >
               <div className="shrink-0 w-12 h-10 rounded-md overflow-hidden relative group/thumb border border-white/5">
-                <img
+                <Image
                   src={`https://i.ytimg.com/vi/${track.id}/mqdefault.jpg`}
                   alt=""
+                  fill
+                  sizes="48px"
                   className="w-full h-full object-cover transition-transform group-hover/item:scale-110"
                 />
                 {currentTrackIndex === index ? (

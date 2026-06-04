@@ -1,26 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 export default function NotesWidget() {
-  const [notes, setNotes] = useState<string>('');
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  useEffect(() => {
-    const savedNotes = localStorage.getItem('dashboard-notes');
-    if (savedNotes) {
-      setNotes(savedNotes);
-    }
-    setIsLoaded(true);
-  }, []);
+  const [notes, setNotes] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('dashboard-notes') ?? '';
+  });
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newNotes = e.target.value;
     setNotes(newNotes);
     localStorage.setItem('dashboard-notes', newNotes);
   };
-
-  if (!isLoaded) return <div className="h-48 animate-pulse bg-zinc-100 dark:bg-zinc-800 rounded-xl"></div>;
 
   return (
     <div className="flex flex-col h-full bg-white/10 dark:bg-zinc-900/20 backdrop-blur-md border border-white/20 dark:border-zinc-800/30 rounded-2xl p-6 shadow-xl">
@@ -30,6 +22,7 @@ export default function NotesWidget() {
         placeholder="// Write some code or notes here..."
         value={notes}
         onChange={handleChange}
+        suppressHydrationWarning
       />
     </div>
   );

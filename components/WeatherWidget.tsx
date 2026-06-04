@@ -11,6 +11,43 @@ interface WeatherData {
   forecast: { day: string; temp: number; conditionCode: number }[];
 }
 
+interface WeatherApiResponse {
+  current_weather: {
+    temperature: number;
+    weathercode: number;
+  };
+  daily: {
+    time: string[];
+    temperature_2m_max: number[];
+    weathercode: number[];
+  };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+const isNumberArray = (value: unknown): value is number[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'number');
+
+const isWeatherApiResponse = (value: unknown): value is WeatherApiResponse => {
+  if (!isRecord(value)) return false;
+  const current = value.current_weather;
+  const daily = value.daily;
+
+  if (!isRecord(current) || !isRecord(daily)) return false;
+
+  return (
+    typeof current.temperature === 'number' &&
+    typeof current.weathercode === 'number' &&
+    isStringArray(daily.time) &&
+    isNumberArray(daily.temperature_2m_max) &&
+    isNumberArray(daily.weathercode)
+  );
+};
+
 const getCondition = (code: number) => {
   if (code === 0) return { label: 'Clear', icon: Sun, color: 'text-yellow-400' };
   if (code <= 3) return { label: 'Cloudy', icon: Cloud, color: 'text-zinc-400' };
@@ -28,12 +65,17 @@ export default function WeatherWidget() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const fetchWeather = async (lat: number, lon: number) => {
       try {
         const response = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,weathercode&timezone=auto`
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,weathercode&timezone=auto`,
+          { signal: controller.signal }
         );
-        const data = await response.json();
+        if (!response.ok) throw new Error('Failed to fetch weather');
+        const data: unknown = await response.json();
+        if (!isWeatherApiResponse(data)) throw new Error('Invalid weather payload');
 
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const forecast = data.daily.time.slice(0, 7).map((time: string, i: number) => ({
@@ -48,15 +90,19 @@ export default function WeatherWidget() {
           conditionCode: data.current_weather.weathercode,
           forecast,
         });
-      } catch (err) {
+      } catch {
+        if (controller.signal.aborted) return;
         setError('Failed to fetch weather');
       } finally {
+        if (controller.signal.aborted) return;
         setLoading(false);
       }
     };
 
     // Hardcoded location: Bratislava, Slovakia
     fetchWeather(48.1486, 17.1077);
+
+    return () => controller.abort();
   }, []);
 
   if (loading) {

@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Newspaper, Globe, Star, Loader2, ExternalLink, RefreshCw } from 'lucide-react';
+/* eslint-disable @next/next/no-img-element */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Newspaper, Loader2, ExternalLink, RefreshCw } from 'lucide-react';
 
 interface NewsItem {
     title: string;
@@ -19,25 +21,34 @@ export default function NewsWidget() {
     const [news, setNews] = useState<NewsItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const latestRequestId = useRef(0);
 
-    const fetchNews = async (category: Tab) => {
+    const fetchNews = useCallback(async (category: Tab, signal?: AbortSignal) => {
+        const requestId = latestRequestId.current + 1;
+        latestRequestId.current = requestId;
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`/api/news?category=${category}`);
+            const response = await fetch(`/api/news?category=${category}`, { signal });
             if (!response.ok) throw new Error('Failed to fetch news');
-            const data = await response.json();
+            const data = await response.json() as { items?: NewsItem[] };
+            if (!Array.isArray(data.items)) throw new Error('Invalid news payload');
+            if (latestRequestId.current !== requestId || signal?.aborted) return;
             setNews(data.items);
-        } catch (err) {
+        } catch {
+            if (signal?.aborted || latestRequestId.current !== requestId) return;
             setError('Failed to load news');
         } finally {
+            if (signal?.aborted || latestRequestId.current !== requestId) return;
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
-        fetchNews(activeTab);
-    }, [activeTab]);
+        const controller = new AbortController();
+        fetchNews(activeTab, controller.signal);
+        return () => controller.abort();
+    }, [activeTab, fetchNews]);
 
     return (
         <div className="flex flex-col h-full bg-white/10 dark:bg-zinc-900/20 backdrop-blur-md border border-white/20 dark:border-zinc-800/30 rounded-2xl p-6 shadow-xl overflow-hidden relative group">
@@ -52,6 +63,7 @@ export default function NewsWidget() {
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
+                            aria-pressed={activeTab === tab}
                             className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${activeTab === tab
                                 ? 'bg-blue-500 text-white shadow-lg'
                                 : 'text-zinc-400 hover:text-white hover:bg-white/5'
@@ -127,6 +139,7 @@ export default function NewsWidget() {
             {/* Refresh Button (visible on hover) */}
             <button
                 onClick={() => fetchNews(activeTab)}
+                aria-label="Refresh news"
                 className="absolute bottom-4 right-4 p-2 bg-black/40 backdrop-blur-md rounded-full text-zinc-400 hover:text-white opacity-0 group-hover:opacity-100 transition-all duration-300 hover:rotate-180"
                 title="Refresh News"
             >
