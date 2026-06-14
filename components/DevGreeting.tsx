@@ -1,52 +1,75 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-
-const DEV_GREETINGS = [
-  "wagwan bossman, time to pattern this ting",
-  "rise n grind my drilla, no slacking today",
-  "allow the nonsense, let's get this bread",
-  "you ready yeah? man's got work to chef up",
-  "no cap, today we moving productive still",
-  "lock in fam, distractions getting bun",
-  "oi, that project ain't gonna build itself yk",
-  "man's on job today, different energy",
-  "if it ain't done today it's peak still",
-  "pattern up or get left behind, simple",
-  "let's make moves, no long ting",
-  "focus mode activated, chat later",
-  "today we coding like rent's due tomorrow",
-  "no excuses fam, just results",
-  "man's got goals, not just vibes",
-  "stay sharp, stay dangerous",
-  "less talking, more doing init",
-  "work rate mad today, let's go",
-  "big man ting, we shipping features today no waffle",
-  "big man ting, we shipping before vibes kick in",
-  "big man ting, bugs getting packed one by one",
-  "deploy season, big man ting no rollback business",
-  "man's pushing commits like it's big man ting, no fear",
-];
+import {
+  DEFAULT_GREETING_PERSONALITY,
+  GREETING_PERSONALITIES,
+  normalizeGreetingPersonality,
+} from "@/lib/greetings";
+import type { GreetingPersonality } from "@/lib/greetings";
+import {
+  GREETING_PERSONALITY_CHANGE_EVENT,
+  GREETING_PERSONALITY_STORAGE_KEY,
+} from "@/lib/settings";
 
 const LAST_DEV_GREETING_STORAGE_KEY = "start-point-last-dev-greeting";
 
-let greetingSnapshot: string | null = null;
+let greetingSnapshot: {
+  greeting: string;
+  personality: GreetingPersonality;
+} | null = null;
 
-const getRandomGreeting = () => {
-  if (greetingSnapshot) return greetingSnapshot;
-
-  const lastGreeting = window.localStorage.getItem(LAST_DEV_GREETING_STORAGE_KEY);
-  const availableGreetings = DEV_GREETINGS.filter((greeting) => greeting !== lastGreeting);
-  const greetingPool = availableGreetings.length > 0 ? availableGreetings : DEV_GREETINGS;
-  const nextGreeting = greetingPool[Math.floor(Math.random() * greetingPool.length)];
-
-  window.localStorage.setItem(LAST_DEV_GREETING_STORAGE_KEY, nextGreeting);
-  greetingSnapshot = nextGreeting;
-
-  return greetingSnapshot;
+const getGreetingPersonalitySnapshot = () => {
+  if (typeof window === "undefined") return DEFAULT_GREETING_PERSONALITY;
+  return normalizeGreetingPersonality(
+    window.localStorage.getItem(GREETING_PERSONALITY_STORAGE_KEY)
+  );
 };
 
-const subscribeToGreeting = () => () => undefined;
+const getLastGreetingStorageKey = (personality: GreetingPersonality) =>
+  `${LAST_DEV_GREETING_STORAGE_KEY}-${personality}`;
+
+const getRandomGreeting = () => {
+  if (typeof window === "undefined") return "";
+
+  const personality = getGreetingPersonalitySnapshot();
+  if (greetingSnapshot?.personality === personality) {
+    return greetingSnapshot.greeting;
+  }
+
+  const greetings = GREETING_PERSONALITIES[personality];
+  const lastGreeting = window.localStorage.getItem(
+    getLastGreetingStorageKey(personality)
+  );
+  const availableGreetings = greetings.filter(
+    (greeting) => greeting !== lastGreeting
+  );
+  const greetingPool =
+    availableGreetings.length > 0 ? availableGreetings : greetings;
+  const nextGreeting =
+    greetingPool[Math.floor(Math.random() * greetingPool.length)];
+
+  window.localStorage.setItem(
+    getLastGreetingStorageKey(personality),
+    nextGreeting
+  );
+  greetingSnapshot = {
+    greeting: nextGreeting,
+    personality,
+  };
+
+  return greetingSnapshot.greeting;
+};
+
+const subscribeToGreeting = (onStoreChange: () => void) => {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(GREETING_PERSONALITY_CHANGE_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(GREETING_PERSONALITY_CHANGE_EVENT, onStoreChange);
+  };
+};
 
 export default function DevGreeting() {
   const greeting = useSyncExternalStore(

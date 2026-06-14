@@ -1,14 +1,30 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useSyncExternalStore } from 'react';
 import { Cloud, CloudRain, CloudLightning, Sun, CloudDrizzle, Loader2, MapPin } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
+import {
+  DEFAULT_WEATHER_CITY,
+  WEATHER_CITY_CHANGE_EVENT,
+  WEATHER_CITY_STORAGE_KEY,
+} from '@/lib/settings';
 
 interface WeatherData {
+  location: string;
   temp: number;
   condition: string;
   conditionCode: number;
   forecast: { day: string; temp: number; conditionCode: number }[];
+}
+
+interface WeatherLocation {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+interface GeocodingApiResponse {
+  results?: WeatherLocation[];
 }
 
 interface WeatherApiResponse {
@@ -31,6 +47,17 @@ const isStringArray = (value: unknown): value is string[] =>
 
 const isNumberArray = (value: unknown): value is number[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'number');
+
+const isWeatherLocation = (value: unknown): value is WeatherLocation =>
+  isRecord(value) &&
+  typeof value.name === 'string' &&
+  typeof value.latitude === 'number' &&
+  typeof value.longitude === 'number';
+
+const isGeocodingApiResponse = (value: unknown): value is GeocodingApiResponse =>
+  isRecord(value) &&
+  (!('results' in value) ||
+    (Array.isArray(value.results) && value.results.every(isWeatherLocation)));
 
 const isWeatherApiResponse = (value: unknown): value is WeatherApiResponse => {
   if (!isRecord(value)) return false;
@@ -59,7 +86,31 @@ const getCondition = (code: number) => {
   return { label: 'Storm', icon: CloudLightning, color: 'text-purple-500' };
 };
 
+const normalizeWeatherCity = (city: string) => city.trim() || DEFAULT_WEATHER_CITY;
+
+const getWeatherCitySnapshot = () => {
+  if (typeof window === 'undefined') return DEFAULT_WEATHER_CITY;
+  return normalizeWeatherCity(
+    window.localStorage.getItem(WEATHER_CITY_STORAGE_KEY) ?? ''
+  );
+};
+
+const subscribeToWeatherCity = (onStoreChange: () => void) => {
+  window.addEventListener('storage', onStoreChange);
+  window.addEventListener(WEATHER_CITY_CHANGE_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener('storage', onStoreChange);
+    window.removeEventListener(WEATHER_CITY_CHANGE_EVENT, onStoreChange);
+  };
+};
+
 export default function WeatherWidget() {
+  const weatherCity = useSyncExternalStore(
+    subscribeToWeatherCity,
+    getWeatherCitySnapshot,
+    () => DEFAULT_WEATHER_CITY
+  );
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,10 +118,30 @@ export default function WeatherWidget() {
   useEffect(() => {
     const controller = new AbortController();
 
-    const fetchWeather = async (lat: number, lon: number) => {
+    const fetchLocation = async (city: string) => {
+      const response = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`,
+        { signal: controller.signal }
+      );
+      if (!response.ok) throw new Error('Failed to fetch location');
+
+      const data: unknown = await response.json();
+      if (!isGeocodingApiResponse(data) || !data.results?.[0]) {
+        throw new Error('Location not found');
+      }
+
+      return data.results[0];
+    };
+
+    const fetchWeather = async (city: string) => {
       try {
+        setLoading(true);
+        setError(null);
+        setWeather(null);
+
+        const location = await fetchLocation(city);
         const response = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,weathercode&timezone=auto`,
+          `https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&current_weather=true&daily=temperature_2m_max,weathercode&timezone=auto`,
           { signal: controller.signal }
         );
         if (!response.ok) throw new Error('Failed to fetch weather');
@@ -85,6 +156,7 @@ export default function WeatherWidget() {
         }));
 
         setWeather({
+          location: location.name,
           temp: Math.round(data.current_weather.temperature),
           condition: getCondition(data.current_weather.weathercode).label,
           conditionCode: data.current_weather.weathercode,
@@ -92,18 +164,18 @@ export default function WeatherWidget() {
         });
       } catch {
         if (controller.signal.aborted) return;
-        setError('Failed to fetch weather');
+        setWeather(null);
+        setError(`Weather unavailable for ${city}`);
       } finally {
         if (controller.signal.aborted) return;
         setLoading(false);
       }
     };
 
-    // Hardcoded location: Bratislava, Slovakia
-    fetchWeather(48.1486, 17.1077);
+    fetchWeather(weatherCity);
 
     return () => controller.abort();
-  }, []);
+  }, [weatherCity]);
 
   if (loading) {
     return (
@@ -132,7 +204,7 @@ export default function WeatherWidget() {
           <h3 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Weather</h3>
           <div className="flex items-center gap-1.5 text-white/80 mt-0.5">
             <MapPin size={14} className="text-emerald-400" />
-            <span className="text-xs font-black uppercase tracking-wider">Bratislava</span>
+            <span className="text-xs font-black uppercase tracking-wider">{weather.location}</span>
           </div>
         </div>
 

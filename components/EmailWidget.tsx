@@ -101,6 +101,24 @@ const normalizeBusinessEmails = (value: unknown): BusinessEmail[] => {
   }));
 };
 
+const getResponseErrorMessage = (value: unknown, fallback: string) => {
+  if (!isRecord(value)) return fallback;
+
+  const upstreamStatus =
+    typeof value.upstreamStatus === "number" ? value.upstreamStatus : null;
+  const prefix = upstreamStatus ? `Email service returned ${upstreamStatus}` : null;
+
+  if (typeof value.error === "string" && value.error.trim()) {
+    return prefix ? `${prefix}: ${value.error}` : value.error;
+  }
+
+  if (typeof value.details === "string" && value.details.trim()) {
+    return prefix ? `${prefix}: ${value.details}` : value.details;
+  }
+
+  return prefix || fallback;
+};
+
 const getSenderInitial = (name: string) => {
   const trimmed = name.trim();
   return trimmed.charAt(0).toUpperCase() || "?";
@@ -154,6 +172,7 @@ export default function EmailWidget() {
   );
 
   const [summary, setSummary] = useState<GmailSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [businessEmails, setBusinessEmails] = useState<BusinessEmail[]>([]);
   const [loading, setLoading] = useState(true);
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
@@ -189,6 +208,7 @@ export default function EmailWidget() {
 
       if (!token) {
         setSummary(null);
+        setSummaryError(null);
         setBusinessEmails([]);
         setError(EMAIL_KEY_ERROR);
         setLoading(false);
@@ -197,6 +217,7 @@ export default function EmailWidget() {
 
       setLoading(true);
       setError(null);
+      setSummaryError(null);
 
       try {
         const headers = { Authorization: `Bearer ${token}` };
@@ -217,13 +238,24 @@ export default function EmailWidget() {
           throw new Error(EMAIL_KEY_ERROR);
         }
 
-        if (!summaryRes.ok || !emailsRes.ok) {
-          throw new Error("Failed to load email data");
+        if (!emailsRes.ok) {
+          throw new Error(
+            getResponseErrorMessage(emailsData, "Failed to load business emails")
+          );
         }
 
         if (latestRequestId.current !== requestId || signal?.aborted) return;
 
-        setSummary(normalizeSummary(summaryData));
+        if (summaryRes.ok) {
+          setSummary(normalizeSummary(summaryData));
+          setSummaryError(null);
+        } else {
+          setSummary(null);
+          setSummaryError(
+            getResponseErrorMessage(summaryData, "Failed to load email summary")
+          );
+        }
+
         setBusinessEmails(normalizeBusinessEmails(emailsData));
 
         const now = new Date();
@@ -239,6 +271,7 @@ export default function EmailWidget() {
       } catch (requestError) {
         if (signal?.aborted || latestRequestId.current !== requestId) return;
         setSummary(null);
+        setSummaryError(null);
         setBusinessEmails([]);
         setError(
           requestError instanceof Error
@@ -294,7 +327,7 @@ export default function EmailWidget() {
     };
   };
 
-  const hasContent = summary || businessEmails.length > 0;
+  const hasContent = summary || summaryError || businessEmails.length > 0;
   const unreadCount = businessEmails.filter((e) => !e.read).length;
 
   /* ---- Tooltip portal (reuses existing style) ---- */
@@ -427,6 +460,27 @@ export default function EmailWidget() {
             ) : (
               /* Main content: summary card + business email list */
               <div className="space-y-2 py-0.5">
+                {/* Summary Error Card */}
+                {summaryError && (
+                  <div
+                    className="relative rounded-xl border border-rose-500/15 bg-rose-500/[0.06] px-3 transition-all duration-300"
+                    style={{ paddingTop: 10, paddingBottom: 10 }}
+                  >
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <AlertCircle
+                        size={12}
+                        className="shrink-0 text-rose-400"
+                      />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-rose-300/80">
+                        Summary Unavailable
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-medium leading-relaxed text-rose-100/70">
+                      {summaryError}
+                    </p>
+                  </div>
+                )}
+
                 {/* Gmail Summary Card */}
                 {summary && (
                   <div
